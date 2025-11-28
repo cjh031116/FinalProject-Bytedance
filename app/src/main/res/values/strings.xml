@@ -1,3 +1,9 @@
 <resources>
     <string name="app_name">FinalWork</string>
+    <string name="avatar">Avatar</string>
+    <string name="like_button">Like button</string>
+    <string name="comment_button">Comment button</string>
+    <string name="collect_button">Collect button</string>
+    <string name="share_button">Share button</string>
 </resources>
+

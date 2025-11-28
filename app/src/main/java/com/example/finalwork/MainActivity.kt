@@ -26,10 +26,8 @@ class MainActivity : AppCompatActivity() {
         adapter = VideoFeedAdapter(this)
         recyclerView.adapter = adapter
 
-        // Initial data
         adapter.submitList(dataSource.loadInitial())
 
-        // Auto play current item on scroll idle
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
@@ -37,7 +35,6 @@ class MainActivity : AppCompatActivity() {
                     autoPlayCurrentVisible()
                 }
 
-                // Load more when near bottom
                 if (!recyclerView.canScrollVertically(1)) {
                     loadMore()
                 }
@@ -55,12 +52,11 @@ class MainActivity : AppCompatActivity() {
 
         if (position == RecyclerView.NO_POSITION) return
 
-        adapter.playVideoAt(position)
+        adapter.playVideoAt(position, recyclerView)
     }
 
     private fun loadMore() {
-        // Simulate async loading
-        handler.postDelayed({
+        handler.postDelayed({ //防抖
             val more = dataSource.loadMore()
             if (more.isNotEmpty()) {
                 adapter.appendList(more)
@@ -76,5 +72,6 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         adapter.release()
+        handler.removeCallbacksAndMessages(null) //针对handler.postDelayed 防止内存泄漏，移除所有待处理的回调和消息
     }
 }

@@ -1,72 +1,106 @@
 package com.example.finalwork
 
 import android.content.Context
+import android.net.Uri
 import android.view.LayoutInflater
-import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
-import android.widget.TextView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.util.Util
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.example.finalwork.databinding.ItemVideoBinding
 
-class VideoFeedAdapter(private val context: Context) : RecyclerView.Adapter<VideoFeedAdapter.VideoViewHolder>() {
+class VideoFeedAdapter(private val context: Context) :
+    ListAdapter<VideoItem, VideoFeedAdapter.VideoViewHolder>(VideoDiffCallback()) {
 
-    private val items = mutableListOf<VideoItem>()
+    private var player: ExoPlayer = ExoPlayer.Builder(context).build()
+    private var currentPlayingPosition = RecyclerView.NO_POSITION
+    private var currentPlayingHolder: VideoViewHolder? = null
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
-        val view = LayoutInflater.from(parent.context).inflate(R.layout.item_video, parent, false)
-        return VideoViewHolder(view)
+        val binding = ItemVideoBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+        return VideoViewHolder(binding)
     }
 
     override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
-        val item = items[position]
+        val item = getItem(position)
         holder.bind(item)
     }
 
-    override fun getItemCount(): Int = items.size
-
-    fun submitList(list: List<VideoItem>) {
-        items.clear()
-        items.addAll(list)
-        notifyDataSetChanged()
+    override fun onViewRecycled(holder: VideoViewHolder) {
+        super.onViewRecycled(holder)
+        // Detach player from the recycled view
+        if (holder == currentPlayingHolder) {
+            holder.binding.playerView.player = null
+        }
     }
 
-    fun appendList(list: List<VideoItem>) {
-        val start = items.size
-        items.addAll(list)
-        notifyItemRangeInserted(start, list.size)
-    }
+    fun playVideoAt(position: Int, recyclerView: RecyclerView) {
+        if (position == RecyclerView.NO_POSITION || position == currentPlayingPosition) {
+            return
+        }
 
-    fun playVideoAt(position: Int) {
-        // TODO: 这里后续接入真正的播放逻辑
+        // Stop previous video if any
+        currentPlayingHolder?.binding?.playerView?.player = null
+
+        val newHolder = recyclerView.findViewHolderForAdapterPosition(position) as? VideoViewHolder
+        if (newHolder != null) {
+            currentPlayingPosition = position
+            currentPlayingHolder = newHolder
+
+            // Attach player to the new view
+            newHolder.binding.playerView.player = player
+
+            // Set media item and play
+            val videoUrl = getItem(position).videoUrl
+            val mediaItem = if (videoUrl.startsWith("http")) {
+                MediaItem.fromUri(videoUrl)
+            } else {
+                // For local video from res/raw
+                val videoId = context.resources.getIdentifier(videoUrl, "raw", context.packageName)
+                val uri = Uri.parse("android.resource://${context.packageName}/$videoId")
+                MediaItem.fromUri(uri)
+            }
+
+            player.setMediaItem(mediaItem)
+            player.prepare()
+            player.playWhenReady = true
+        }
     }
 
     fun pauseCurrent() {
-        // TODO: 暂停当前播放
+        player.pause()
     }
 
     fun release() {
-        // TODO: 释放播放器等资源
+        player.release()
     }
 
-    class VideoViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
-        // 去掉 PlayerView，保留信息展示控件
-        private val ivAvatar: ImageView = itemView.findViewById(R.id.iv_avatar)
-        private val tvAuthor: TextView = itemView.findViewById(R.id.tv_author)
-        private val tvTitle: TextView = itemView.findViewById(R.id.tv_title)
-        private val tvLike: TextView = itemView.findViewById(R.id.tv_like_count)
-        private val tvComment: TextView = itemView.findViewById(R.id.tv_comment_count)
-        private val tvCollect: TextView = itemView.findViewById(R.id.tv_collect_count)
-        private val tvShare: TextView = itemView.findViewById(R.id.tv_share_count)
+    fun appendList(newList: List<VideoItem>) {
+        submitList(currentList + newList)
+    }
 
+    class VideoViewHolder(val binding: ItemVideoBinding) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: VideoItem) {
-            // 头像暂时用应用图标占位
-            ivAvatar.setImageResource(R.mipmap.ic_launcher_round)
-            tvAuthor.text = item.authorName
-            tvTitle.text = item.title
-            tvLike.text = item.likeCount.toString()
-            tvComment.text = item.commentCount.toString()
-            tvCollect.text = item.collectCount.toString()
-            tvShare.text = item.shareCount.toString()
+            binding.ivAvatar.setImageResource(R.mipmap.ic_launcher_round)
+            binding.tvAuthor.text = item.authorName
+            binding.tvTitle.text = item.title
+            binding.tvLikeCount.text = item.likeCount.toString()
+            binding.tvCommentCount.text = item.commentCount.toString()
+            binding.tvCollectCount.text = item.collectCount.toString()
+            binding.tvShareCount.text = item.shareCount.toString()
         }
+    }
+}
+
+class VideoDiffCallback : DiffUtil.ItemCallback<VideoItem>() {
+    override fun areItemsTheSame(oldItem: VideoItem, newItem: VideoItem): Boolean {
+        return oldItem.id == newItem.id
+    }
+
+    override fun areContentsTheSame(oldItem: VideoItem, newItem: VideoItem): Boolean {
+        return oldItem == newItem
     }
 }
