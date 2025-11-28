@@ -17,6 +17,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        supportActionBar?.hide()
 
         recyclerView = findViewById(R.id.rv_videos)
         val layoutManager = LinearLayoutManager(this, RecyclerView.VERTICAL, false)
