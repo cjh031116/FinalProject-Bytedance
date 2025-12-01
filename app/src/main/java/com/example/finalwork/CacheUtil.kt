@@ -16,8 +16,8 @@ object CacheUtil {
     private fun getOptimalCacheSize(context: Context): Long {
         val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val isLowMemory = activityManager.isLowRamDevice
-        // 低内存设备使用 50MB, 否则使用 100MB
-        return if (isLowMemory) 50L * 1024 * 1024 else 100L * 1024 * 1024
+        // 🆕 增加缓存大小：低内存 100MB，正常设备 200MB
+        return if (isLowMemory) 100L * 1024 * 1024 else 200L * 1024 * 1024
     }
 
     @Synchronized

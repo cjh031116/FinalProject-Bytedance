@@ -1,21 +1,25 @@
 package com.example.finalwork
 
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
+import com.example.finalwork.mvp.VideoFeedContract
+import com.example.finalwork.mvp.VideoFeedMvpAdapter
+import com.example.finalwork.mvp.VideoFeedPresenter
 
-class MainActivity : AppCompatActivity() {
+/**
+ * MainActivity - MVP 架构的 View 层
+ * 职责：只负责 UI 显示和用户交互，不处理业务逻辑
+ */
+class MainActivity : AppCompatActivity(), VideoFeedContract.View {
 
     private lateinit var recyclerView: RecyclerView
-    private lateinit var adapter: VideoFeedAdapter
-    private val dataSource = VideoRepository()
-    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var adapter: VideoFeedMvpAdapter
+    private lateinit var presenter: VideoFeedPresenter
 
     companion object {
         private const val TAG = "MainActivity"
@@ -28,77 +32,146 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         supportActionBar?.hide()
 
-        // 显示当前测试模式
-        val testMode = if (ENABLE_PRELOAD) "启用预加载" else "禁用预加载"
-        Toast.makeText(this, "测试模式: $testMode", Toast.LENGTH_LONG).show()
-        Log.i(TAG, "========================================")
-        Log.i(TAG, "应用启动 - 测试模式: $testMode")
-        Log.i(TAG, "========================================")
+        // 🆕 测试时清除缓存（可选）
+         clearCacheForTest()
 
-        //layoutmanager来设置滑动样式
+        // 初始化 Presenter
+        presenter = VideoFeedPresenter(this)
+        presenter.attachView(this)
+        presenter.setPreloadEnabled(ENABLE_PRELOAD)
+
+        // 设置 RecyclerView
+        setupRecyclerView()
+
+        // 加载初始数据
+        presenter.loadInitialVideos()
+    }
+
+    /**
+     * 🆕 清除缓存用于测试
+     * 在测试前取消注释 onCreate 中的调用
+     */
+    private fun clearCacheForTest() {
+        try {
+            CacheUtil.releaseCache()
+            val cacheDir = java.io.File(cacheDir, "media")
+            if (cacheDir.exists()) {
+                cacheDir.deleteRecursively()
+                Log.d(TAG, "✓ 缓存已清除")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "清除缓存失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 设置 RecyclerView
+     */
+    private fun setupRecyclerView() {
         recyclerView = findViewById(R.id.rv_videos)
         val layoutManager = LinearLayoutManager(this, RecyclerView.VERTICAL, false)
         recyclerView.layoutManager = layoutManager
 
-        //总能找到一个完全可见的视频项来播放
+        // 设置 SnapHelper
         val snapHelper = PagerSnapHelper()
         snapHelper.attachToRecyclerView(recyclerView)
 
-        //配置好适配器 - 传入预加载开关
-        adapter = VideoFeedAdapter(this, enablePreload = ENABLE_PRELOAD)
+        // 创建 Adapter，传入回调
+        adapter = VideoFeedMvpAdapter(this) { position, loadTime, isCached ->
+            // 视频加载完成回调到 Presenter
+            presenter.onVideoLoaded(position, loadTime, isCached)
+        }
         recyclerView.adapter = adapter
 
-        adapter.submitList(dataSource.loadInitial())
-
+        // 监听滚动事件
         recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
+
+                // 滚动停止时播放当前可见视频
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
-                    autoPlayCurrentVisible()
+                    val position = getCurrentVisiblePosition()
+                    if (position != RecyclerView.NO_POSITION) {
+                        presenter.onVideoScrolled(position)
+                    }
                 }
 
+                // 滚动到底部时加载更多
                 if (!recyclerView.canScrollVertically(1)) {
-                    loadMore()
+                    presenter.loadMoreVideos()
                 }
             }
         })
 
-        recyclerView.post { autoPlayCurrentVisible() }
+        // 初始播放第一个视频
+        recyclerView.post {
+            val position = getCurrentVisiblePosition()
+            if (position != RecyclerView.NO_POSITION) {
+                presenter.onVideoScrolled(position)
+            }
+        }
     }
 
-    private fun autoPlayCurrentVisible() {
-        val layoutManager = recyclerView.layoutManager as? LinearLayoutManager ?: return
-        val position = layoutManager.findFirstCompletelyVisibleItemPosition()
+    /**
+     * 获取当前可见的视频位置
+     */
+    private fun getCurrentVisiblePosition(): Int {
+        val layoutManager = recyclerView.layoutManager as? LinearLayoutManager ?: return RecyclerView.NO_POSITION
+        return layoutManager.findFirstCompletelyVisibleItemPosition()
             .takeIf { it != RecyclerView.NO_POSITION }
             ?: layoutManager.findFirstVisibleItemPosition()
+    }
 
-        if (position == RecyclerView.NO_POSITION) return
+    // =========================
+    // View 接口实现
+    // =========================
 
+    override fun showVideos(videos: List<VideoItem>) {
+        adapter.submitList(videos)
+        Log.d(TAG, "显示视频列表: ${videos.size} 个")
+    }
+
+    override fun appendVideos(videos: List<VideoItem>) {
+        val currentList = adapter.currentList.toMutableList()
+        currentList.addAll(videos)
+        adapter.submitList(currentList)
+        Log.d(TAG, "追加视频: ${videos.size} 个")
+    }
+
+    override fun playVideo(position: Int) {
         adapter.playVideoAt(position, recyclerView)
     }
 
-    private fun loadMore() {
-        handler.postDelayed({ //防抖
-            val more = dataSource.loadMore()
-            if (more.isNotEmpty()) {
-                adapter.appendList(more)
-            }
-        }, 500)
+    override fun pauseVideo() {
+        adapter.pauseCurrent()
     }
+
+    override fun showTestMode(isPreloadEnabled: Boolean) {
+        val testMode = if (isPreloadEnabled) "启用预加载" else "禁用预加载"
+        Toast.makeText(this, "测试模式: $testMode (MVP架构)", Toast.LENGTH_LONG).show()
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "应用启动 - 测试模式: $testMode")
+        Log.i(TAG, "架构: MVP")
+        Log.i(TAG, "========================================")
+    }
+
+    override fun showPerformanceReport(report: String) {
+        Log.i(TAG, "\n$report")
+    }
+
+    // =========================
+    // 生命周期管理
+    // =========================
 
     override fun onPause() {
         super.onPause()
-        adapter.pauseCurrent()
+        presenter.onPause()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-
-        // 输出完整性能报告
-        Log.i(TAG, "\n" + adapter.getPerformanceReport())
-
+        presenter.onDestroy()
         adapter.release()
-        handler.removeCallbacksAndMessages(null) //针对handler.postDelayed 防止内存泄漏，移除所有待处理的回调和消息
         CacheUtil.releaseCache()
     }
 }
