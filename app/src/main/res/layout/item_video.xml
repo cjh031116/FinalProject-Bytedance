@@ -136,5 +136,20 @@
             android:textColor="@android:color/white" />
     </LinearLayout>
 
+    <!-- 全屏按钮 -->
+    <ImageButton
+        android:id="@+id/btn_fullscreen"
+        android:layout_width="40dp"
+        android:layout_height="45dp"
+        android:layout_marginEnd="16dp"
+        android:background="@android:color/transparent"
+        android:src="@android:drawable/ic_menu_crop"
+        android:contentDescription="全屏"
+        android:scaleType="fitCenter"
+        app:tint="@android:color/white"
+        app:layout_constraintTop_toBottomOf="@id/side_actions_container"
+        app:layout_constraintBottom_toBottomOf="@id/bottom_info_container"
+        app:layout_constraintLeft_toRightOf="@id/bottom_info_container"/>
+
 </androidx.constraintlayout.widget.ConstraintLayout>
 

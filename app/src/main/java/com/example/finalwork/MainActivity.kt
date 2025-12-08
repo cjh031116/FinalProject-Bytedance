@@ -1,9 +1,15 @@
 package com.example.finalwork
 
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
@@ -21,10 +27,12 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
     private lateinit var adapter: VideoFeedMvpAdapter
     private lateinit var presenter: VideoFeedPresenter
 
+    //  新增：全屏状态标记
+    private var isFullscreen = false
+
     companion object {
         private const val TAG = "MainActivity"
-        // ⚠️ 测试开关：改为 false 测试"优化前"，改为 true 测试"优化后"
-        private const val ENABLE_PRELOAD = true
+        private const val ENABLE_PRELOAD = true //测试开关
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -32,7 +40,7 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
         setContentView(R.layout.activity_main)
         supportActionBar?.hide()
 
-        // 🆕 测试时清除缓存（可选）
+        // 测试时清除缓存
          clearCacheForTest()
 
         // 初始化 Presenter
@@ -45,10 +53,31 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
 
         // 加载初始数据
         presenter.loadInitialVideos()
+
+        // ✅ 注册返回键处理（替代已弃用的 onBackPressed）
+        setupBackPressHandler()
     }
 
     /**
-     * 🆕 清除缓存用于测试
+     * 设置返回键处理
+     */
+    private fun setupBackPressHandler() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (isFullscreen) {
+                    // 横屏时按返回键退出全屏
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                } else {
+                    // 竖屏时正常退出
+                    isEnabled = false
+                    onBackPressedDispatcher.onBackPressed()
+                }
+            }
+        })
+    }
+
+    /**
+     * 清除缓存用于测试
      * 在测试前取消注释 onCreate 中的调用
      */
     private fun clearCacheForTest() {
@@ -88,17 +117,34 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
             override fun onScrollStateChanged(recyclerView: RecyclerView, newState: Int) {
                 super.onScrollStateChanged(recyclerView, newState)
 
+                // ✅ 全屏时禁止滚动
+                if (isFullscreen) {
+                    recyclerView.stopScroll()
+                    return
+                }
+
                 // 滚动停止时播放当前可见视频
                 if (newState == RecyclerView.SCROLL_STATE_IDLE) {
                     val position = getCurrentVisiblePosition()
                     if (position != RecyclerView.NO_POSITION) {
                         presenter.onVideoScrolled(position)
+
+                        // ✅ 设置全屏按钮点击事件
+                        setupFullscreenButton(position)
                     }
                 }
 
                 // 滚动到底部时加载更多
                 if (!recyclerView.canScrollVertically(1)) {
                     presenter.loadMoreVideos()
+                }
+            }
+
+            // ✅ 全屏时阻止滚动
+            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                super.onScrolled(recyclerView, dx, dy)
+                if (isFullscreen && dy != 0) {
+                    recyclerView.stopScroll()
                 }
             }
         })
@@ -108,9 +154,81 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
             val position = getCurrentVisiblePosition()
             if (position != RecyclerView.NO_POSITION) {
                 presenter.onVideoScrolled(position)
+                setupFullscreenButton(position)
             }
         }
     }
+
+    /**
+     * 设置全屏按钮点击事件
+     */
+    private fun setupFullscreenButton(position: Int) {
+        val holder = recyclerView.findViewHolderForAdapterPosition(position)
+            as? VideoFeedMvpAdapter.VideoViewHolder
+
+        holder?.binding?.btnFullscreen?.setOnClickListener {
+            toggleFullscreen()
+        }
+    }
+
+    /**
+     * 切换全屏/退出全屏
+     */
+    private fun toggleFullscreen() {
+        if (resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT) {
+            // 切换到横屏
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        } else {
+            // 切换回竖屏
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
+
+    /**
+     * 监听屏幕旋转
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+
+        when (newConfig.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> {
+                Log.d(TAG, "切换到横屏模式")
+                isFullscreen = true
+                hideSystemUI()
+                // 禁止 RecyclerView 滚动
+                recyclerView.suppressLayout(true)
+            }
+            Configuration.ORIENTATION_PORTRAIT -> {
+                Log.d(TAG, "切换到竖屏模式")
+                isFullscreen = false
+                showSystemUI()
+                // 恢复 RecyclerView 滚动
+                recyclerView.suppressLayout(false)
+            }
+        }
+    }
+
+    /**
+     * 隐藏系统 UI（沉浸式全屏）
+     */
+    private fun hideSystemUI() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, recyclerView).let { controller ->
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+    }
+
+    /**
+     * 显示系统 UI
+     */
+    private fun showSystemUI() {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowInsetsControllerCompat(window, recyclerView)
+            .show(WindowInsetsCompat.Type.systemBars())
+    }
+
 
     /**
      * 获取当前可见的视频位置
@@ -122,9 +240,7 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
             ?: layoutManager.findFirstVisibleItemPosition()
     }
 
-    // =========================
     // View 接口实现
-    // =========================
 
     override fun showVideos(videos: List<VideoItem>) {
         adapter.submitList(videos)
@@ -159,9 +275,6 @@ class MainActivity : AppCompatActivity(), VideoFeedContract.View {
         Log.i(TAG, "\n$report")
     }
 
-    // =========================
-    // 生命周期管理
-    // =========================
 
     override fun onPause() {
         super.onPause()

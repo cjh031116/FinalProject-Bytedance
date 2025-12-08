@@ -33,7 +33,6 @@ class VideoFeedMvpAdapter(
     private var player: ExoPlayer
     private var currentPlayingPosition = RecyclerView.NO_POSITION
     private var currentPlayingHolder: VideoViewHolder? = null
-
     private val cacheDataSourceFactory: CacheDataSource.Factory
 
     companion object {

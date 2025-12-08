@@ -39,9 +39,9 @@ class VideoModel(private val context: Context) {
 
     companion object {
         private const val TAG = "VideoModel"
-        private const val PRELOAD_AHEAD_COUNT = 2  // 预加载 2 个视频
-        private const val PRELOAD_SIZE_BYTES = 2 * 1024 * 1024L  // 预加载 2MB
-        private const val CACHE_HIT_THRESHOLD = 1024 * 1024L  // 🆕 缓存命中阈值：1MB 即可
+        private const val PRELOAD_AHEAD_COUNT = 1  // 🆕 只预加载下一个视频
+        private const val PRELOAD_SIZE_BYTES = 1 * 1024 * 1024L  // 🆕 只预加载 1MB
+        private const val CACHE_HIT_THRESHOLD = 512 * 1024L  // 🆕 缓存命中阈值：512KB 即可
     }
 
     /**
@@ -92,7 +92,7 @@ class VideoModel(private val context: Context) {
         cancelPreloadJobs()
 
         val preloadEndPosition = (currentPosition + PRELOAD_AHEAD_COUNT).coerceAtMost(totalVideos - 1)
-        Log.d(TAG, "📹 视频 #$currentPosition → 开始预加载 #${currentPosition + 1} 到 #$preloadEndPosition")
+        Log.d(TAG, "📹 当前视频 #$currentPosition → 预加载下一个视频 #${currentPosition + 1} (1MB)")
 
         for (i in currentPosition + 1..preloadEndPosition) {
             if (i >= videos.size) continue
@@ -106,15 +106,10 @@ class VideoModel(private val context: Context) {
                 continue
             }
 
-            // 🆕 立即预加载下一个视频，第二个视频稍微延迟
+            // 🆕 立即预加载下一个视频
             val job = preloadScope.launch {
                 try {
-                    // 下一个视频立即预加载，第二个视频延迟 500ms
-                    if (i > currentPosition + 1) {
-                        delay(500L)
-                    }
-
-                    Log.d(TAG, "  ⬇ #$i 开始预加载...")
+                    Log.d(TAG, "  ⬇ #$i 开始预加载 1MB...")
                     preloadSingleVideo(cacheKey)
                     Log.d(TAG, "  ✅ #$i 预加载完成")
                 } catch (e: Exception) {
