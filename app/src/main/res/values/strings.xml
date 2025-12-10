@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">FinalWork</string>
+    <string name="avatar">Avatar</string>
+    <string name="like_button">Like</string>
+    <string name="comment_button">Comment</string>
+    <string name="collect_button">Collect</string>
+    <string name="share_button">Share</string>
+    <string name="exit_fullscreen">Exit Fullscreen</string>
+    <string name="fullscreen">Fullscreen</string>
+</resources>
+
