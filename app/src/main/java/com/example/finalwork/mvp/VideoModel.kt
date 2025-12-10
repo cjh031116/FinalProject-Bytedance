@@ -25,10 +25,8 @@ class VideoModel(private val context: Context) {
     private val preloadScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val preloadJobs = mutableMapOf<String, Job>()
 
-    // 🆕 记录最后预加载的位置，避免重复触发
     private var lastPreloadPosition = -1
 
-    // 🆕 预加载需要的组件
     private val upstreamFactory = DefaultDataSource.Factory(context)
     private val cacheDataSourceFactory = CacheDataSource.Factory()
         .setCache(cache)
@@ -39,14 +37,11 @@ class VideoModel(private val context: Context) {
 
     companion object {
         private const val TAG = "VideoModel"
-        private const val PRELOAD_AHEAD_COUNT = 1  // 🆕 只预加载下一个视频
-        private const val PRELOAD_SIZE_BYTES = 1 * 1024 * 1024L  // 🆕 只预加载 1MB
-        private const val CACHE_HIT_THRESHOLD = 512 * 1024L  // 🆕 缓存命中阈值：512KB 即可
+        private const val PRELOAD_AHEAD_COUNT = 1
+        private const val PRELOAD_SIZE_BYTES = 1 * 1024 * 1024L
+        private const val CACHE_HIT_THRESHOLD = 512 * 1024L
     }
 
-    /**
-     * 🆕 将 videoUrl 转换为统一的 URI 字符串（与 Adapter 保持一致）
-     */
     private fun buildCacheKey(videoUrl: String): String {
         return if (videoUrl.startsWith("http")) {
             videoUrl
@@ -56,39 +51,27 @@ class VideoModel(private val context: Context) {
         }
     }
 
-    /**
-     * 加载初始视频列表
-     */
     fun loadInitialVideos(): List<VideoItem> {
         Log.d(TAG, "加载初始视频列表")
         return repository.loadInitial()
     }
 
-    /**
-     * 加载更多视频
-     */
     fun loadMoreVideos(): List<VideoItem> {
         Log.d(TAG, "加载更多视频")
         return repository.loadMore()
     }
 
-    /**
-     * 预加载接下来的视频
-     */
     fun preloadNextVideos(currentPosition: Int, totalVideos: Int, videos: List<VideoItem>) {
         if (!enablePreload) {
             Log.d(TAG, "⚠ 预加载已禁用")
             return
         }
 
-        // 🆕 如果位置没变，跳过（避免重复预加载）
         if (currentPosition == lastPreloadPosition) {
-            return  // 静默跳过，不打印日志
+            return
         }
 
         lastPreloadPosition = currentPosition
-
-        // 取消之前的预加载任务
         cancelPreloadJobs()
 
         val preloadEndPosition = (currentPosition + PRELOAD_AHEAD_COUNT).coerceAtMost(totalVideos - 1)
@@ -98,35 +81,39 @@ class VideoModel(private val context: Context) {
             if (i >= videos.size) continue
 
             val videoUrl = videos[i].videoUrl
-            val cacheKey = buildCacheKey(videoUrl)
 
-            // 检查是否已缓存
-            if (isCached(cacheKey)) {
-                Log.d(TAG, "  ✓ #$i 已缓存，跳过")
-                continue
-            }
+            // --- 关键修复点 ---
+            // 只有当 videoUrl 不为 null (即当前项是视频) 时，才执行预加载逻辑
+            if (videoUrl != null) {
+                val cacheKey = buildCacheKey(videoUrl)
 
-            // 🆕 立即预加载下一个视频
-            val job = preloadScope.launch {
-                try {
-                    Log.d(TAG, "  ⬇ #$i 开始预加载 1MB...")
-                    preloadSingleVideo(cacheKey)
-                    Log.d(TAG, "  ✅ #$i 预加载完成")
-                } catch (e: Exception) {
-                    if (e is CancellationException) {
-                        Log.d(TAG, "  ❌ #$i 预加载被取消")
-                    } else {
-                        Log.e(TAG, "  ❌ #$i 预加载失败: ${e.message}")
+                if (isCached(cacheKey)) {
+                    Log.d(TAG, "  ✓ #$i 已缓存，跳过")
+                    continue
+                }
+
+                val job = preloadScope.launch {
+                    try {
+                        Log.d(TAG, "  ⬇ #$i 开始预加载 1MB...")
+                        preloadSingleVideo(cacheKey)
+                        Log.d(TAG, "  ✅ #$i 预加载完成")
+                    } catch (e: Exception) {
+                        if (e is CancellationException) {
+                            Log.d(TAG, "  ❌ #$i 预加载被取消")
+                        } else {
+                            Log.e(TAG, "  ❌ #$i 预加载失败: ${e.message}")
+                        }
                     }
                 }
+                preloadJobs[cacheKey] = job
+            } else {
+                // 如果是图片项，打印日志并跳过
+                Log.d(TAG, "  ✓ #$i 是图片项，跳过预加载")
             }
-            preloadJobs[cacheKey] = job
+            // --- 修复结束 ---
         }
     }
 
-    /**
-     * 🆕 真正实现预加载 - 使用 CacheWriter 写入缓存
-     */
     private suspend fun preloadSingleVideo(cacheKey: String) {
         withContext(Dispatchers.IO) {
             try {
@@ -139,13 +126,11 @@ class VideoModel(private val context: Context) {
 
                 val dataSource = cacheDataSourceFactory.createDataSource()
 
-                // 使用 CacheWriter 写入缓存
                 val cacheWriter = CacheWriter(
                     dataSource,
                     dataSpec,
                     null
                 ) { _, bytesCached, _ ->
-                    // 进度回调
                     val progress = (bytesCached * 100 / PRELOAD_SIZE_BYTES).toInt()
                     if (progress % 25 == 0) {
                         Log.d(TAG, "预加载进度: $progress%")
@@ -161,13 +146,9 @@ class VideoModel(private val context: Context) {
         }
     }
 
-    /**
-     * 检查视频是否已缓存（优化：降低阈值）
-     */
     fun isCached(cacheKey: String): Boolean {
         return try {
             val cachedBytes = cache.getCachedBytes(cacheKey, 0, PRELOAD_SIZE_BYTES)
-            // 🆕 只要有 1MB 就算缓存命中，提高命中率
             val isCached = cachedBytes >= CACHE_HIT_THRESHOLD
             Log.d(TAG, "检查缓存 $cacheKey: ${if (isCached) "已缓存" else "未缓存"} ($cachedBytes bytes, 阈值: $CACHE_HIT_THRESHOLD)")
             isCached
@@ -177,9 +158,6 @@ class VideoModel(private val context: Context) {
         }
     }
 
-    /**
-     * 取消所有预加载任务
-     */
     private fun cancelPreloadJobs() {
         if (preloadJobs.isEmpty()) return
         Log.d(TAG, "取消 ${preloadJobs.size} 个预加载任务")
@@ -187,13 +165,9 @@ class VideoModel(private val context: Context) {
         preloadJobs.clear()
     }
 
-    /**
-     * 清理资源
-     */
     fun cleanup() {
         cancelPreloadJobs()
         preloadScope.cancel()
         Log.d(TAG, "Model 资源已释放")
     }
 }
-

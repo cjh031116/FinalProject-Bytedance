@@ -58,6 +58,10 @@ dependencies {
     implementation("androidx.media3:media3-database:1.3.1")
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    implementation("com.github.bumptech.glide:glide:4.16.0")
+    implementation("androidx.viewpager2:viewpager2:1.1.0")
+    implementation("com.google.android.material:material:1.12.0") // 请确保您的 material 版本较新
+    implementation("com.tbuonomo:dotsindicator:5.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

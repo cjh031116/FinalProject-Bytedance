@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
@@ -16,19 +17,20 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
 import com.example.finalwork.CacheUtil
+import com.example.finalwork.ItemType
 import com.example.finalwork.R
 import com.example.finalwork.VideoItem
+import com.example.finalwork.databinding.ItemImageCarouselBinding
+import com.example.finalwork.databinding.ItemImagePageBinding
 import com.example.finalwork.databinding.ItemVideoBinding
+import com.google.android.material.tabs.TabLayoutMediator
 
-/**
- * MVP 版本的 Adapter
- * 职责：只负责视图绑定和播放控制，不处理业务逻辑
- */
 class VideoFeedMvpAdapter(
     private val context: Context,
     private val onVideoLoadComplete: (position: Int, loadTimeMs: Long, isCached: Boolean) -> Unit
-) : ListAdapter<VideoItem, VideoFeedMvpAdapter.VideoViewHolder>(VideoDiffCallback()) {
+) : ListAdapter<VideoItem, RecyclerView.ViewHolder>(VideoDiffCallback()) {
 
     private var player: ExoPlayer
     private var currentPlayingPosition = RecyclerView.NO_POSITION
@@ -37,6 +39,8 @@ class VideoFeedMvpAdapter(
 
     companion object {
         private const val TAG = "VideoMvpAdapter"
+        private const val VIEW_TYPE_VIDEO = 1
+        private const val VIEW_TYPE_IMAGE_CAROUSEL = 2
     }
 
     init {
@@ -47,16 +51,10 @@ class VideoFeedMvpAdapter(
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
-        // 🆕 极致优化的缓冲策略
         val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                1000,   // minBufferMs: 最小缓冲 1 秒
-                5000,   // maxBufferMs: 最大缓冲 5 秒
-                200,    // bufferForPlaybackMs: 200ms 即可播放（极速起播）
-                400     // bufferForPlaybackAfterRebufferMs: 重新缓冲后 400ms
-            )
+            .setBufferDurationsMs(1000, 5000, 200, 400)
             .setPrioritizeTimeOverSizeThresholds(true)
-            .setTargetBufferBytes(-1)  // 🆕 不限制目标缓冲大小
+            .setTargetBufferBytes(-1)
             .build()
 
         player = ExoPlayer.Builder(context)
@@ -66,35 +64,62 @@ class VideoFeedMvpAdapter(
             .setSeekForwardIncrementMs(5000)
             .build()
 
-        // 🆕 设置播放器为低延迟模式
         player.setVideoScalingMode(androidx.media3.common.C.VIDEO_SCALING_MODE_SCALE_TO_FIT)
-
-        Log.d(TAG, "Adapter 初始化完成（极致优化）")
+        Log.d(TAG, "Adapter 初始化完成")
     }
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
-        val binding = ItemVideoBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-        return VideoViewHolder(binding)
+    override fun getItemViewType(position: Int): Int {
+        return when (getItem(position).type) {
+            ItemType.VIDEO -> VIEW_TYPE_VIDEO
+            ItemType.IMAGE_CAROUSEL -> VIEW_TYPE_IMAGE_CAROUSEL
+        }
     }
 
-    override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
-        holder.bind(getItem(position))
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return when (viewType) {
+            VIEW_TYPE_VIDEO -> {
+                val binding = ItemVideoBinding.inflate(inflater, parent, false)
+                VideoViewHolder(binding)
+            }
+            VIEW_TYPE_IMAGE_CAROUSEL -> {
+                val binding = ItemImageCarouselBinding.inflate(inflater, parent, false)
+                ImageCarouselViewHolder(binding)
+            }
+            else -> throw IllegalArgumentException("Invalid view type")
+        }
     }
 
-    override fun onViewRecycled(holder: VideoViewHolder) {
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        val item = getItem(position)
+        when (holder) {
+            is VideoViewHolder -> holder.bind(item)
+            is ImageCarouselViewHolder -> holder.bind(item)
+        }
+    }
+
+    override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         super.onViewRecycled(holder)
-        if (holder == currentPlayingHolder) {
+        if (holder is VideoViewHolder && holder == currentPlayingHolder) {
             holder.binding.playerView.player = null
         }
     }
 
-    /**
-     * 播放指定位置的视频
-     */
     fun playVideoAt(position: Int, recyclerView: RecyclerView) {
-        if (position == RecyclerView.NO_POSITION || position == currentPlayingPosition) {
+        if (position == RecyclerView.NO_POSITION) return
+
+        if (getItem(position).type == ItemType.IMAGE_CAROUSEL) {
+            if (currentPlayingPosition != RecyclerView.NO_POSITION) {
+                Log.d(TAG, "滚动到图片项，暂停视频")
+                pauseCurrent()
+                currentPlayingHolder?.binding?.playerView?.player = null
+                currentPlayingPosition = RecyclerView.NO_POSITION
+                currentPlayingHolder = null
+            }
             return
         }
+
+        if (position == currentPlayingPosition) return
 
         currentPlayingHolder?.binding?.playerView?.player = null
 
@@ -102,35 +127,22 @@ class VideoFeedMvpAdapter(
         if (newHolder != null) {
             currentPlayingPosition = position
             currentPlayingHolder = newHolder
-
             newHolder.binding.playerView.player = player
 
             val videoItem = getItem(position)
-            val videoUrl = videoItem.videoUrl
+            val videoUrl = videoItem.videoUrl ?: return
             val mediaItem = buildMediaItem(videoUrl)
-
-            // 记录开始加载时间
             val startTime = System.currentTimeMillis()
             val isCached = checkIfCached(videoUrl)
 
             Log.d(TAG, "开始播放视频 #$position: ${videoItem.title}")
-            Log.d(TAG, "缓存状态: ${if (isCached) "已缓存" else "未缓存"}")
 
-            // 添加播放器监听器
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
-                    when (playbackState) {
-                        Player.STATE_BUFFERING -> {
-                            Log.d(TAG, "视频 #$position 缓冲中...")
-                        }
-                        Player.STATE_READY -> {
-                            val loadTime = System.currentTimeMillis() - startTime
-
-                            // 回调到 Presenter
-                            onVideoLoadComplete(position, loadTime, isCached)
-
-                            player.removeListener(this)
-                        }
+                    if (playbackState == Player.STATE_READY) {
+                        val loadTime = System.currentTimeMillis() - startTime
+                        onVideoLoadComplete(position, loadTime, isCached)
+                        player.removeListener(this)
                     }
                 }
             })
@@ -142,65 +154,30 @@ class VideoFeedMvpAdapter(
         }
     }
 
-    /**
-     * 暂停当前视频
-     */
     fun pauseCurrent() {
         player.pause()
     }
 
-    /**
-     * 释放播放器资源
-     */
     fun release() {
         player.release()
         Log.d(TAG, "播放器资源已释放")
     }
 
-    /**
-     * 构建 MediaItem（修复：使用统一的 Cache Key）
-     */
     private fun buildMediaItem(videoUrl: String): MediaItem {
-        // 🆕 使用统一的 Cache Key
         val cacheKey = buildCacheKey(videoUrl)
-        val uri = Uri.parse(cacheKey)
-
-        Log.d(TAG, "构建 MediaItem: $videoUrl -> $cacheKey")
-
-        return MediaItem.Builder()
-            .setUri(uri)
-            .setMediaId(cacheKey)  // 🆕 使用 cacheKey 作为 mediaId，保持一致
-            .build()
+        return MediaItem.Builder().setUri(Uri.parse(cacheKey)).setMediaId(cacheKey).build()
     }
 
-    /**
-     * 检查视频是否已缓存（修复：使用统一的 Cache Key）
-     */
     private fun checkIfCached(videoUrl: String): Boolean {
-        return try {
-            val simpleCache = CacheUtil.getCache(context)
-
-            // 🆕 使用与 Model 相同的 Cache Key 生成逻辑
-            val cacheKey = buildCacheKey(videoUrl)
-
-            val preloadSize = 2 * 1024 * 1024L  // 预加载 2MB
-            val cacheHitThreshold = 1024 * 1024L  // 缓存命中阈值：1MB
-            val cachedBytes = simpleCache.getCachedBytes(cacheKey, 0, preloadSize)
-            val isCached = cachedBytes >= cacheHitThreshold
-
-            Log.d(TAG, "🔍 检查缓存: $videoUrl -> ${if (isCached) "✅ 已缓存" else "❌ 未缓存"} ($cachedBytes / $cacheHitThreshold bytes)")
-
-            isCached
-        } catch (e: Exception) {
-            Log.e(TAG, "缓存检查失败: ${e.message}")
-            false
-        }
+        val cacheKey = buildCacheKey(videoUrl)
+        val preloadSize = 2 * 1024 * 1024L
+        val cacheHitThreshold = 1024 * 1024L
+        val cachedBytes = CacheUtil.getCache(context).getCachedBytes(cacheKey, 0, preloadSize)
+        return cachedBytes >= cacheHitThreshold
     }
 
-    /**
-     * 🆕 生成统一的 Cache Key（与 VideoModel 保持一致）
-     */
-    private fun buildCacheKey(videoUrl: String): String {
+    private fun buildCacheKey(videoUrl: String?): String {
+        if (videoUrl == null) return ""
         return if (videoUrl.startsWith("http")) {
             videoUrl
         } else {
@@ -209,12 +186,8 @@ class VideoFeedMvpAdapter(
         }
     }
 
-    /**
-     * ViewHolder
-     */
     class VideoViewHolder(val binding: ItemVideoBinding) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: VideoItem) {
-            binding.ivAvatar.setImageResource(R.mipmap.ic_launcher_round)
             binding.tvAuthor.text = item.authorName
             binding.tvTitle.text = item.title
             binding.tvLikeCount.text = item.likeCount.toString()
@@ -223,11 +196,41 @@ class VideoFeedMvpAdapter(
             binding.tvShareCount.text = item.shareCount.toString()
         }
     }
+
+    class ImageCarouselViewHolder(private val binding: ItemImageCarouselBinding) : RecyclerView.ViewHolder(binding.root) {
+        fun bind(item: VideoItem) {
+            item.imageUrls?.let { urls ->
+                val imagePagerAdapter = ImagePagerAdapter(urls)
+                binding.imagePager.adapter = imagePagerAdapter
+                binding.dotsIndicator.attachTo(binding.imagePager)
+            }
+            binding.bottomInfoContainer.tvAuthor.text = item.authorName
+            binding.bottomInfoContainer.tvTitle.text = item.title
+            binding.sideActionsContainer.tvLikeCount.text = item.likeCount.toString()
+            binding.sideActionsContainer.tvCommentCount.text = item.commentCount.toString()
+            binding.sideActionsContainer.tvCollectCount.text = item.collectCount.toString()
+            binding.sideActionsContainer.tvShareCount.text = item.shareCount.toString()
+        }
+    }
+
+    class ImagePagerAdapter(private val imageUrls: List<String>) : RecyclerView.Adapter<ImagePagerAdapter.ImageViewHolder>() {
+        class ImageViewHolder(val binding: ItemImagePageBinding) : RecyclerView.ViewHolder(binding.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ImageViewHolder {
+            val binding = ItemImagePageBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+            return ImageViewHolder(binding)
+        }
+
+        override fun onBindViewHolder(holder: ImageViewHolder, position: Int) {
+            Glide.with(holder.itemView.context)
+                .load(imageUrls[position])
+                .into(holder.binding.imageView)
+        }
+
+        override fun getItemCount(): Int = imageUrls.size
+    }
 }
 
-/**
- * DiffUtil 回调
- */
 class VideoDiffCallback : DiffUtil.ItemCallback<VideoItem>() {
     override fun areItemsTheSame(oldItem: VideoItem, newItem: VideoItem): Boolean {
         return oldItem.id == newItem.id
@@ -237,4 +240,3 @@ class VideoDiffCallback : DiffUtil.ItemCallback<VideoItem>() {
         return oldItem == newItem
     }
 }
-
